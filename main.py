@@ -1,53 +1,34 @@
 import os
 import sqlite3
-import random
 from datetime import datetime
 
-import matplotlib.pyplot as plt
-
 from telegram import (
+    ReplyKeyboardMarkup,
     Update,
-    ReplyKeyboardMarkup
 )
-
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     MessageHandler,
+    ContextTypes,
     filters,
-    ContextTypes
 )
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-
 # =========================
-# HAVRYLIV FINANCE AI V8
+# TOKEN
 # =========================
 
-TOKEN = os.getenv("8736027860:AAF_L9aVnN72VCeMFn6W30ocQKAlI5b-QQ8")
-
-DB_NAME = "finance.db"
+TOKEN = os.getenv("TOKEN")
 
 # =========================
 # DATABASE
 # =========================
 
-conn = sqlite3.connect(DB_NAME, check_same_thread=False)
+conn = sqlite3.connect("finance.db", check_same_thread=False)
 cursor = conn.cursor()
 
 cursor.execute("""
-CREATE TABLE IF NOT EXISTS users (
-    user_id INTEGER PRIMARY KEY,
-    username TEXT,
-    level INTEGER DEFAULT 1,
-    xp INTEGER DEFAULT 0,
-    language TEXT DEFAULT 'ua',
-    created_at TEXT
-)
-""")
-
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS transactions (
+CREATE TABLE IF NOT EXISTS finance (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER,
     type TEXT,
@@ -63,15 +44,15 @@ conn.commit()
 # KEYBOARD
 # =========================
 
-keyboard = ReplyKeyboardMarkup(
-    [
-        ["💸 Витрата", "💰 Дохід"],
-        ["💳 Баланс", "📊 Статистика"],
-        ["📜 Історія", "📈 Графік"],
-        ["🧠 AI Аналіз", "🎯 Бюджет"],
-        ["🌍 Мова", "⚙️ Налаштування"],
-        ["ℹ️ Допомога"]
-    ],
+keyboard = [
+    ["💸 Витрата", "💰 Дохід"],
+    ["💳 Баланс", "📊 Статистика"],
+    ["🧾 Історія", "🧠 AI Аналіз"],
+    ["🌍 Мова", "⚙️ Налаштування"]
+]
+
+reply_markup = ReplyKeyboardMarkup(
+    keyboard,
     resize_keyboard=True
 )
 
@@ -80,246 +61,181 @@ keyboard = ReplyKeyboardMarkup(
 # =========================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    user = update.effective_user
-
-    cursor.execute("""
-    INSERT OR IGNORE INTO users (
-        user_id,
-        username,
-        created_at
-    )
-    VALUES (?, ?, ?)
-    """, (
-        user.id,
-        user.username,
-        datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    ))
-
-    conn.commit()
-
-    text = f"""
+    text = """
 🔥 HAVRYLIV FINANCE AI
-⚡ V8 Enterprise
 
-👋 Вітаю, {user.first_name}!
+👋 Вітаю!
 
-Ваш AI Finance Assistant готовий.
+Ваш AI Finance Assistant готовий 🚀
 """
 
     await update.message.reply_text(
         text,
-        reply_markup=keyboard
+        reply_markup=reply_markup
     )
 
 # =========================
 # BALANCE
 # =========================
 
-async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    user_id = update.effective_user.id
-
+def get_balance(user_id):
     cursor.execute("""
-    SELECT SUM(amount)
-    FROM transactions
+    SELECT type, amount FROM finance
     WHERE user_id = ?
-    AND type = 'income'
-    """, (user_id,))
-
-    income = cursor.fetchone()[0] or 0
-
-    cursor.execute("""
-    SELECT SUM(amount)
-    FROM transactions
-    WHERE user_id = ?
-    AND type = 'expense'
-    """, (user_id,))
-
-    expense = cursor.fetchone()[0] or 0
-
-    balance_amount = income - expense
-
-    text = f"""
-💳 Баланс: {balance_amount:.2f} PLN
-
-💰 Дохід: {income:.2f} PLN
-💸 Витрати: {expense:.2f} PLN
-"""
-
-    await update.message.reply_text(text)
-
-# =========================
-# STATS
-# =========================
-
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    user_id = update.effective_user.id
-
-    cursor.execute("""
-    SELECT category, SUM(amount)
-    FROM transactions
-    WHERE user_id = ?
-    AND type = 'expense'
-    GROUP BY category
     """, (user_id,))
 
     rows = cursor.fetchall()
 
-    if not rows:
-        await update.message.reply_text(
-            "📭 Немає статистики."
-        )
-        return
-
-    text = "📊 Статистика:\n\n"
+    balance = 0
 
     for row in rows:
-        text += f"• {row[0]} — {row[1]:.2f} PLN\n"
+        if row[0] == "income":
+            balance += row[1]
+        else:
+            balance -= row[1]
 
-    await update.message.reply_text(text)
-
-# =========================
-# HISTORY
-# =========================
-
-async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    user_id = update.effective_user.id
-
-    cursor.execute("""
-    SELECT type, amount, category, created_at
-    FROM transactions
-    WHERE user_id = ?
-    ORDER BY id DESC
-    LIMIT 10
-    """, (user_id,))
-
-    rows = cursor.fetchall()
-
-    if not rows:
-        await update.message.reply_text(
-            "📭 Історія порожня."
-        )
-        return
-
-    text = "📜 Останні операції:\n\n"
-
-    for row in rows:
-
-        emoji = "💸" if row[0] == "expense" else "💰"
-
-        text += (
-            f"{emoji} {row[1]:.2f} PLN\n"
-            f"📂 {row[2]}\n"
-            f"🕒 {row[3]}\n\n"
-        )
-
-    await update.message.reply_text(text)
+    return balance
 
 # =========================
-# GRAPH
+# ADD EXPENSE
 # =========================
 
-async def graph(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    user_id = update.effective_user.id
-
-    cursor.execute("""
-    SELECT category, SUM(amount)
-    FROM transactions
-    WHERE user_id = ?
-    AND type = 'expense'
-    GROUP BY category
-    """, (user_id,))
-
-    rows = cursor.fetchall()
-
-    if not rows:
-        await update.message.reply_text(
-            "📭 Немає даних для графіка."
-        )
-        return
-
-    labels = [row[0] for row in rows]
-    amounts = [row[1] for row in rows]
-
-    plt.figure(figsize=(6, 6))
-    plt.pie(
-        amounts,
-        labels=labels,
-        autopct='%1.1f%%'
-    )
-
-    plt.title("HAVRYLIV FINANCE AI")
-
-    graph_file = "graph.png"
-
-    plt.savefig(graph_file)
-    plt.close()
-
-    with open(graph_file, "rb") as photo:
-        await update.message.reply_photo(photo)
-
-# =========================
-# AI ANALYSIS
-# =========================
-
-async def ai_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    tips = [
-        "💡 Спробуйте відкладати 20% доходу.",
-        "💡 Витрати на їжу занадто високі.",
-        "💡 Ви добре контролюєте бюджет.",
-        "💡 Можна оптимізувати підписки.",
-        "💡 Зменшіть імпульсивні покупки."
-    ]
+async def add_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["state"] = "expense"
 
     await update.message.reply_text(
-        f"🧠 AI Аналіз:\n\n{random.choice(tips)}"
+        "💸 Введіть суму витрати:"
     )
 
 # =========================
-# MESSAGE HANDLER
+# ADD INCOME
 # =========================
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def add_income(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["state"] = "income"
+
+    await update.message.reply_text(
+        "💰 Введіть суму доходу:"
+    )
+
+# =========================
+# TEXT HANDLER
+# =========================
+
+async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = update.message.text
-    user_id = update.effective_user.id
+    user_id = update.message.from_user.id
 
     # =====================
     # BUTTONS
     # =====================
 
+    if text == "💸 Витрата":
+        await add_expense(update, context)
+        return
+
+    if text == "💰 Дохід":
+        await add_income(update, context)
+        return
+
     if text == "💳 Баланс":
-        await balance(update, context)
+
+        balance = get_balance(user_id)
+
+        await update.message.reply_text(
+            f"💳 Ваш баланс: {balance:.2f} PLN"
+        )
+
         return
 
     if text == "📊 Статистика":
-        await stats(update, context)
+
+        cursor.execute("""
+        SELECT COUNT(*)
+        FROM finance
+        WHERE user_id = ?
+        """, (user_id,))
+
+        count = cursor.fetchone()[0]
+
+        balance = get_balance(user_id)
+
+        await update.message.reply_text(
+            f"""
+📊 Статистика:
+
+🧾 Операцій: {count}
+💳 Баланс: {balance:.2f} PLN
+"""
+        )
+
         return
 
-    if text == "📜 Історія":
-        await history(update, context)
-        return
+    if text == "🧾 Історія":
 
-    if text == "📈 Графік":
-        await graph(update, context)
+        cursor.execute("""
+        SELECT type, amount, created_at
+        FROM finance
+        WHERE user_id = ?
+        ORDER BY id DESC
+        LIMIT 10
+        """, (user_id,))
+
+        rows = cursor.fetchall()
+
+        if not rows:
+            await update.message.reply_text(
+                "❌ Історія порожня"
+            )
+            return
+
+        message = "🧾 Останні операції:\n\n"
+
+        for row in rows:
+
+            emoji = "💰" if row[0] == "income" else "💸"
+
+            message += f"{emoji} {row[1]} PLN\n📅 {row[2]}\n\n"
+
+        await update.message.reply_text(message)
+
         return
 
     if text == "🧠 AI Аналіз":
-        await ai_analysis(update, context)
+
+        balance = get_balance(user_id)
+
+        if balance > 1000:
+            advice = "🔥 Ви добре контролюєте фінанси!"
+        elif balance > 0:
+            advice = "😄 Баланс позитивний. Так тримати!"
+        else:
+            advice = "⚠️ Ви витрачаєте більше ніж заробляєте."
+
+        await update.message.reply_text(
+            f"""
+🧠 AI Аналіз
+
+💳 Баланс: {balance:.2f} PLN
+
+💡 Порада:
+{advice}
+"""
+        )
+
         return
 
     if text == "🌍 Мова":
 
         await update.message.reply_text(
-            "🌍 Languages:\n\n"
-            "🇺🇦 Українська\n"
-            "🇺🇸 English\n"
-            "🇵🇱 Polski"
+            """
+🌍 Languages:
+
+🇺🇦 Українська
+🇺🇸 English
+🇵🇱 Polski
+"""
         )
 
         return
@@ -327,78 +243,33 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == "⚙️ Налаштування":
 
         await update.message.reply_text(
-            "⚙️ Settings\n\n"
-            "🔔 Notifications: ON\n"
-            "💱 Currency: PLN\n"
-            "🎮 Gamer Mode: ON"
-        )
+            """
+⚙️ Налаштування
 
-        return
-
-    if text == "ℹ️ Допомога":
-
-        await update.message.reply_text(
-            "ℹ️ HELP\n\n"
-            "💸 Витрата — додати витрату\n"
-            "💰 Дохід — додати дохід\n"
-            "📊 Статистика — аналітика\n"
-            "📈 Графік — графік витрат\n"
-            "🧠 AI Аналіз — AI поради\n\n"
-            "🔥 HAVRYLIV FINANCE AI"
+🔔 Push notifications
+🌙 Dark mode
+💱 Валюта
+☁️ Cloud sync
+"""
         )
 
         return
 
     # =====================
-    # ADD EXPENSE
+    # SAVE DATA
     # =====================
 
-    if text == "💸 Витрата":
+    state = context.user_data.get("state")
 
-        context.user_data["mode"] = "expense"
-
-        await update.message.reply_text(
-            "💸 Введіть суму витрати:"
-        )
-
-        return
-
-    # =====================
-    # ADD INCOME
-    # =====================
-
-    if text == "💰 Дохід":
-
-        context.user_data["mode"] = "income"
-
-        await update.message.reply_text(
-            "💰 Введіть суму доходу:"
-        )
-
-        return
-
-    # =====================
-    # HANDLE NUMBERS
-    # =====================
-
-    mode = context.user_data.get("mode")
-
-    if mode in ["expense", "income"]:
+    if state in ["expense", "income"]:
 
         try:
-
             amount = float(text)
 
-            transaction_type = mode
-
-            category = (
-                "Expense"
-                if mode == "expense"
-                else "Income"
-            )
+            finance_type = "income" if state == "income" else "expense"
 
             cursor.execute("""
-            INSERT INTO transactions (
+            INSERT INTO finance (
                 user_id,
                 type,
                 amount,
@@ -408,52 +279,38 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             VALUES (?, ?, ?, ?, ?)
             """, (
                 user_id,
-                transaction_type,
+                finance_type,
                 amount,
-                category,
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                "general",
+                datetime.now().strftime("%Y-%m-%d %H:%M")
             ))
 
             conn.commit()
 
-            emoji = "💸" if mode == "expense" else "💰"
+            context.user_data["state"] = None
+
+            emoji = "💰" if finance_type == "income" else "💸"
 
             await update.message.reply_text(
-                f"{emoji} Додано: {amount:.2f} PLN"
+                f"{emoji} Записано: {amount:.2f} PLN"
             )
-
-            context.user_data["mode"] = None
-
-            return
 
         except:
             await update.message.reply_text(
-                "❌ Введіть число."
+                "❌ Введіть число"
             )
-            return
-
-# =========================
-# NOTIFICATIONS
-# =========================
-
 
 # =========================
 # MAIN
 # =========================
 
+print("🔥 HAVRYLIV FINANCE AI STARTED")
+
 app = ApplicationBuilder().token(TOKEN).build()
 
+app.add_handler(CommandHandler("start", start))
 app.add_handler(
-    CommandHandler("start", start)
+    MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler)
 )
-
-app.add_handler(
-    MessageHandler(
-        filters.TEXT & ~filters.COMMAND,
-        handle_message
-    )
-)
-
-print("🔥 HAVRYLIV FINANCE AI V8 STARTED")
 
 app.run_polling()
