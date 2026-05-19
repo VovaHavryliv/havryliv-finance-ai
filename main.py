@@ -436,9 +436,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # NOTIFICATIONS
 # =========================
 
-scheduler = AsyncIOScheduler()
-
-scheduler.start()
 
 # =========================
 # MAIN
